@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(python -m py_compile \"C:\\\\Users\\\\jackd\\\\news-alert\\\\news_alert.py\"; if \\($?\\) { \"Syntax OK\" } else { \"Syntax error\" })",
+      "PowerShell(cd \"C:\\\\Users\\\\jackd\\\\news-alert\"; $env:PYTHONUTF8=1; python news_alert.py --dry-run 2>&1 | Select-Object -First 80)"
+    ]
+  }
+}

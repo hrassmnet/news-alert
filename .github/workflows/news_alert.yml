@@ -1,0 +1,37 @@
+name: News Alert
+
+on:
+  schedule:
+    # 07:00 UTC daily — adjust to your preferred time
+    - cron: "0 7 * * *"
+  workflow_dispatch:   # allows manual trigger from the Actions UI
+
+jobs:
+  check-feeds:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # needed to commit seen_items.json back
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run news alert
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python news_alert.py
+
+      - name: Commit updated state
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add seen_items.json
+          # Only commit if the file actually changed
+          git diff --cached --quiet || git commit -m "chore: update seen items [skip ci]"
+          git push
