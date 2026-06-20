@@ -41,6 +41,11 @@ FEEDS = [
     # Aerospace
     {"name": "SpaceNews",         "url": "https://spacenews.com/feed/"},
     {"name": "NASA",              "url": "https://www.nasa.gov/news-release/feed/"},
+    # Power Platform / Copilot Studio (work)
+    {"name": "Power Platform Blog", "url": "https://www.microsoft.com/en-us/power-platform/blog/feed/"},
+    # Unverified — Microsoft has changed this URL before. Run --dry-run first;
+    # if it 404s in the console output, just delete this line.
+    {"name": "Copilot Studio Blog", "url": "https://www.microsoft.com/en-us/microsoft-copilot/blog/copilot-studio/feed/"},
 ]
 
 # ---------------------------------------------------------------------------
@@ -84,6 +89,11 @@ KEYWORDS: dict[str, list[str]] = {
         "DARPA", "Pentagon", "DoD", "military robotics",
         "counter-drone", "battlefield AI", "C2 system",
         "signals intelligence", "SIGINT", "ISR",
+    ],
+    "Power_Platform": [
+        "Copilot Studio", "Power Automate", "Power Apps", "Power Platform",
+        "Dataverse", "Power Pages", "Power Fx", "MCP connector",
+        "release wave", "Power Platform admin",
     ],
 }
 
