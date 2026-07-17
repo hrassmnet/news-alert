@@ -321,15 +321,13 @@ def main() -> None:
                 continue
 
             if alerts_sent >= MAX_ALERTS_PER_RUN:
-                print(f"  Reached MAX_ALERTS_PER_RUN={MAX_ALERTS_PER_RUN}, stopping.")
-                break
+                print(f"  Reached MAX_ALERTS_PER_RUN={MAX_ALERTS_PER_RUN}, "
+                      f"skipping remaining sends for this run (still marking items seen).")
+                continue
 
             msg = build_message(name, categories, title, link, summary)
             if send_telegram(token, chat_id, msg):
                 alerts_sent += 1
-        else:
-            continue
-        break   # outer loop break if inner loop broke early
 
     save_seen(seen)
 
