@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-RSS news alert — keyword filtering, no LLM, Telegram output.
+RSS news alert -- keyword filtering, no LLM, Telegram output.
 First run seeds seen_items.json without sending any alerts.
 Subsequent runs alert on new matching items only.
 """
@@ -14,6 +14,7 @@ import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -21,45 +22,45 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 FEEDS = [
-    # AI research  (Anthropic has no public RSS feed as of 2025)
-    {"name": "DeepMind",          "url": "https://deepmind.google/blog/rss.xml"},
-    {"name": "OpenAI",            "url": "https://openai.com/blog/rss.xml"},
-    {"name": "Microsoft AI",      "url": "https://blogs.microsoft.com/ai/feed/"},
-    {"name": "Microsoft Blog",    "url": "https://blogs.microsoft.com/feed/"},
-    {"name": "Google Research",   "url": "https://research.google/blog/rss/"},
-    {"name": "Hugging Face",      "url": "https://huggingface.co/blog/feed.xml"},
+    # AI research (Anthropic has no public RSS feed as of 2025)
+    {"name": "DeepMind", "url": "https://deepmind.google/blog/rss.xml"},
+    {"name": "OpenAI", "url": "https://openai.com/blog/rss.xml"},
+    {"name": "Microsoft AI", "url": "https://blogs.microsoft.com/ai/feed/"},
+    {"name": "Microsoft Blog", "url": "https://blogs.microsoft.com/feed/"},
+    {"name": "Google Research", "url": "https://research.google/blog/rss/"},
+    {"name": "Hugging Face", "url": "https://huggingface.co/blog/feed.xml"},
     # Tech news
-    {"name": "Ars Technica",      "url": "https://feeds.arstechnica.com/arstechnica/index"},
-    {"name": "MIT Tech Review",   "url": "https://www.technologyreview.com/feed/"},
-    {"name": "The Verge",         "url": "https://www.theverge.com/rss/index.xml"},
+    {"name": "Ars Technica", "url": "https://feeds.arstechnica.com/arstechnica/index"},
+    {"name": "MIT Tech Review", "url": "https://www.technologyreview.com/feed/"},
+    {"name": "The Verge", "url": "https://www.theverge.com/rss/index.xml"},
     # Defence & security
-    {"name": "Breaking Defense",  "url": "https://breakingdefense.com/feed/"},
-    {"name": "Defense One",       "url": "https://www.defenseone.com/rss/technology/"},
-    {"name": "War on the Rocks",  "url": "https://warontherocks.com/feed/"},
-    {"name": "The Debrief",       "url": "https://thedebrief.org/feed/"},
-    {"name": "Defense News",      "url": "https://www.defensenews.com/arc/outboundfeeds/rss/"},
-    # Aerospace
-    {"name": "SpaceNews",         "url": "https://spacenews.com/feed/"},
-    {"name": "NASA",              "url": "https://www.nasa.gov/news-release/feed/"},
+    {"name": "Breaking Defense", "url": "https://breakingdefense.com/feed/"},
+    {"name": "Defense One", "url": "https://www.defenseone.com/rss/technology/"},
+    {"name": "War on the Rocks", "url": "https://warontherocks.com/feed/"},
+    {"name": "The Debrief", "url": "https://thedebrief.org/feed/"},
+    {"name": "Defense News", "url": "https://www.defensenews.com/arc/outboundfeeds/rss/"},
     # Power Platform / Copilot Studio (work)
     {"name": "Power Platform Blog", "url": "https://www.microsoft.com/en-us/power-platform/blog/feed/"},
-    # Unverified — Microsoft has changed this URL before. Run --dry-run first;
+    # Unverified -- Microsoft has changed this URL before. Run --dry-run first;
     # if it 404s in the console output, just delete this line.
     {"name": "Copilot Studio Blog", "url": "https://www.microsoft.com/en-us/microsoft-copilot/blog/copilot-studio/feed/"},
 ]
 
 # ---------------------------------------------------------------------------
-# Keyword categories  (word-boundary matched, case-insensitive)
+# Keyword categories (word-boundary matched, case-insensitive)
 # ---------------------------------------------------------------------------
 
 KEYWORDS: dict[str, list[str]] = {
     "AI": [
         "artificial intelligence", "machine learning", "deep learning",
         "neural network", "large language model", "LLM", "foundation model",
-        "generative AI", "GenAI", "Claude", "GPT", "Gemini", "Grok",
-        "AI model", "AI system", "AI safety", "AI alignment", "AGI",
-        "reinforcement learning", "computer vision", "natural language",
-        "transformer model", "AI agent", "multimodal",
+        "generative AI", "GenAI", "Claude", "GPT", "ChatGPT", "OpenAI", "AI",
+        "Gemini", "Grok", "Kimi", "Moonshot AI", "DeepSeek", "Qwen", "Llama",
+        "Mistral AI", "AI model", "AI system", "AI safety", "AI alignment",
+        "AGI", "reinforcement learning", "computer vision", "natural language",
+        "transformer model", "AI agent", "multimodal", "frontier model",
+        "reasoning model", "state of the art", "SOTA", "breakthrough",
+        "benchmark",
     ],
     "Aerospace": [
         "aerospace", "hypersonic", "ICBM", "ballistic missile",
@@ -103,8 +104,8 @@ KEYWORDS: dict[str, list[str]] = {
 
 SEEN_FILE = Path("seen_items.json")
 PRUNE_AFTER_DAYS = 30
-MAX_ALERTS_PER_RUN = 25   # safety cap
-
+MAX_ITEM_AGE_DAYS = 14  # ignore entries older than this, even if never seen before
+MAX_ALERTS_PER_RUN = 25  # safety cap
 
 # ---------------------------------------------------------------------------
 # Feed fetching & parsing
@@ -112,7 +113,6 @@ MAX_ALERTS_PER_RUN = 25   # safety cap
 
 ATOM_NS = "http://www.w3.org/2005/Atom"
 CONTENT_NS = "http://purl.org/rss/1.0/modules/content/"
-
 
 def fetch_bytes(url: str) -> bytes | None:
     try:
@@ -123,11 +123,10 @@ def fetch_bytes(url: str) -> bytes | None:
         with urllib.request.urlopen(req, timeout=20) as r:
             return r.read()
     except urllib.error.HTTPError as e:
-        print(f"    HTTP {e.code}: {url}")
+        print(f"  HTTP {e.code}: {url}")
     except Exception as e:
-        print(f"    Error fetching {url}: {e}")
+        print(f"  Error fetching {url}: {e}")
     return None
-
 
 def _text(el, *tags) -> str:
     for tag in tags:
@@ -136,12 +135,11 @@ def _text(el, *tags) -> str:
             return val
     return ""
 
-
 def parse_feed(data: bytes) -> list[dict]:
     try:
         root = ET.fromstring(data)
     except ET.ParseError as e:
-        print(f"    XML parse error: {e}")
+        print(f"  XML parse error: {e}")
         return []
 
     entries = []
@@ -152,32 +150,58 @@ def parse_feed(data: bytes) -> list[dict]:
         for e in root.findall(f"{{{ATOM_NS}}}entry"):
             link_el = e.find(f"{{{ATOM_NS}}}link")
             link = link_el.get("href", "") if link_el is not None else ""
+            published = (
+                e.findtext(f"{{{ATOM_NS}}}published", "")
+                or e.findtext(f"{{{ATOM_NS}}}updated", "")
+            )
             entries.append({
-                "title":   e.findtext(f"{{{ATOM_NS}}}title", ""),
-                "link":    link,
+                "title": e.findtext(f"{{{ATOM_NS}}}title", ""),
+                "link": link,
                 "summary": e.findtext(f"{{{ATOM_NS}}}summary", "")
-                           or e.findtext(f"{{{ATOM_NS}}}content", ""),
-                "id":      e.findtext(f"{{{ATOM_NS}}}id", link),
+                    or e.findtext(f"{{{ATOM_NS}}}content", ""),
+                "id": e.findtext(f"{{{ATOM_NS}}}id", link),
+                "published": published,
             })
     else:
         # RSS 2.0 (root is <rss> or <rdf:RDF>)
-        channel = root.find("channel") or root
+        channel = root.find("channel")
+        if channel is None:
+            channel = root
         for item in channel.findall("item"):
             entries.append({
-                "title":   item.findtext("title", ""),
-                "link":    item.findtext("link", ""),
+                "title": item.findtext("title", ""),
+                "link": item.findtext("link", ""),
                 "summary": item.findtext("description", "")
-                           or item.findtext(f"{{{CONTENT_NS}}}encoded", ""),
-                "id":      item.findtext("guid", item.findtext("link", "")),
+                    or item.findtext(f"{{{CONTENT_NS}}}encoded", ""),
+                "id": item.findtext("guid", item.findtext("link", "")),
+                "published": item.findtext("pubDate", ""),
             })
 
     return entries
-
 
 def entry_key(entry: dict) -> str:
     uid = entry.get("id") or entry.get("link") or entry.get("title", "")
     return hashlib.sha1(uid.encode()).hexdigest()
 
+def entry_age_days(entry: dict) -> float | None:
+    """Return how many days old an entry is, or None if no usable date."""
+    raw = entry.get("published", "")
+    if not raw:
+        return None
+    dt = None
+    try:
+        dt = parsedate_to_datetime(raw)
+    except (TypeError, ValueError):
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    delta = datetime.now(timezone.utc) - dt
+    return delta.total_seconds() / 86400
 
 # ---------------------------------------------------------------------------
 # Keyword matching
@@ -187,7 +211,6 @@ def _matches(text: str, keyword: str) -> bool:
     pattern = r"\b" + re.escape(keyword) + r"\b"
     return bool(re.search(pattern, text, re.IGNORECASE))
 
-
 def matched_categories(entry: dict) -> list[str]:
     raw = strip_html(entry.get("title", "")) + " " + strip_html(entry.get("summary", ""))
     found = []
@@ -196,10 +219,8 @@ def matched_categories(entry: dict) -> list[str]:
             found.append(category)
     return found
 
-
 def strip_html(text: str) -> str:
     return re.sub(r"<[^>]+>", " ", text or "").strip()
-
 
 # ---------------------------------------------------------------------------
 # Telegram
@@ -214,33 +235,31 @@ def send_telegram(token: str, chat_id: str, text: str) -> bool:
         "disable_web_page_preview": True,
     }).encode()
     req = urllib.request.Request(url, data=payload,
-                                 headers={"Content-Type": "application/json"})
+        headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
             result = json.loads(r.read())
             if not result.get("ok"):
-                print(f"    Telegram error: {result.get('description')}")
+                print(f"  Telegram error: {result.get('description')}")
                 return False
             return True
     except Exception as e:
-        print(f"    Telegram send error: {e}")
+        print(f"  Telegram send error: {e}")
         return False
 
-
 def build_message(source: str, categories: list[str], title: str,
-                  link: str, summary: str) -> str:
+                   link: str, summary: str) -> str:
     tags = " ".join(f"#{c}" for c in categories)
     snippet = strip_html(summary)[:220].strip()
     if snippet:
-        snippet = f"\n<i>{snippet}…</i>"
+        snippet = f"\n<i>{snippet}...</i>"
     safe_title = title.replace("<", "&lt;").replace(">", "&gt;")
     return (
-        f"<b>[{source}]</b>  {tags}\n"
+        f"<b>[{source}]</b> {tags}\n"
         f"<b>{safe_title}</b>"
         f"{snippet}\n"
         f'<a href="{link}">Read more</a>'
     )
-
 
 # ---------------------------------------------------------------------------
 # State persistence
@@ -254,12 +273,10 @@ def load_seen() -> dict:
             pass
     return {}
 
-
 def save_seen(seen: dict) -> None:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=PRUNE_AFTER_DAYS)).isoformat()
     pruned = {k: v for k, v in seen.items() if v >= cutoff}
     SEEN_FILE.write_text(json.dumps(pruned, indent=2))
-
 
 # ---------------------------------------------------------------------------
 # Main
@@ -272,13 +289,13 @@ def main() -> None:
     dry_run = "--dry-run" in sys.argv
     if not dry_run and (not token or not chat_id):
         print("ERROR: Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID environment variables.")
-        print("       Use --dry-run to test without sending.")
+        print("  Use --dry-run to test without sending.")
         sys.exit(1)
 
     seen = load_seen()
     first_run = len(seen) == 0
     if first_run:
-        print("First run detected — seeding state without sending alerts.")
+        print("First run detected -- seeding state without sending alerts.")
 
     now = datetime.now(timezone.utc).isoformat()
     alerts_sent = 0
@@ -296,14 +313,18 @@ def main() -> None:
         print(f"  {len(entries)} entries parsed")
 
         for entry in entries:
+            age_days = entry_age_days(entry)
+            if age_days is not None and age_days > MAX_ITEM_AGE_DAYS:
+                continue  # too old -- never alert, never remember
+
             key = entry_key(entry)
 
             if key in seen:
                 continue
-            seen[key] = now   # mark seen regardless of keyword match
+            seen[key] = now  # mark seen regardless of keyword match
 
             if first_run:
-                continue      # don't alert on seed run
+                continue  # don't alert on seed run
 
             categories = matched_categories(entry)
             if not categories:
@@ -316,7 +337,7 @@ def main() -> None:
             print(f"  MATCH [{', '.join(categories)}]: {title[:90]}")
 
             if dry_run:
-                print("  (dry-run, not sending)")
+                print("    (dry-run, not sending)")
                 alerts_sent += 1
                 continue
 
@@ -336,8 +357,7 @@ def main() -> None:
         print(f"Seeded {len(seen)} items. No alerts sent. Run again tomorrow for real alerts.")
     else:
         action = "matched (dry-run)" if dry_run else "alerts sent"
-        print(f"Done — {alerts_sent} {action}.")
-
+        print(f"Done -- {alerts_sent} {action}.")
 
 if __name__ == "__main__":
     main()
