@@ -25,7 +25,6 @@ FEEDS = [
     # AI research (Anthropic has no public RSS feed as of 2025)
     {"name": "DeepMind", "url": "https://deepmind.google/blog/rss.xml"},
     {"name": "OpenAI", "url": "https://openai.com/blog/rss.xml"},
-    {"name": "Microsoft AI", "url": "https://blogs.microsoft.com/ai/feed/"},
     {"name": "Microsoft Blog", "url": "https://blogs.microsoft.com/feed/"},
     {"name": "Google Research", "url": "https://research.google/blog/rss/"},
     {"name": "Hugging Face", "url": "https://huggingface.co/blog/feed.xml"},
