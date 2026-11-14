@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-RSS news alert -- keyword filtering, no LLM, Telegram output.
+Focused daily news alert -- ranked topic filtering, no LLM, Telegram output.
 First run seeds seen_items.json without sending any alerts.
 Subsequent runs alert on new matching items only.
 """
@@ -21,81 +21,78 @@ from pathlib import Path
 # Feed sources
 # ---------------------------------------------------------------------------
 
+# Focused sources plus topic-specific Google News RSS searches.
+# Google News provides broad coverage without scraping subscriber-only articles.
+def news_search(query: str) -> str:
+    from urllib.parse import quote
+    return "https://news.google.com/rss/search?q=" + quote(query) + "&hl=en-IE&gl=IE&ceid=IE:en"
+
 FEEDS = [
-    # AI research (Anthropic has no public RSS feed as of 2025)
     {"name": "DeepMind", "url": "https://deepmind.google/blog/rss.xml"},
     {"name": "OpenAI", "url": "https://openai.com/blog/rss.xml"},
-    {"name": "Microsoft Blog", "url": "https://blogs.microsoft.com/feed/"},
     {"name": "Google Research", "url": "https://research.google/blog/rss/"},
     {"name": "Hugging Face", "url": "https://huggingface.co/blog/feed.xml"},
-    # Tech news
     {"name": "Ars Technica", "url": "https://feeds.arstechnica.com/arstechnica/index"},
     {"name": "MIT Tech Review", "url": "https://www.technologyreview.com/feed/"},
-    {"name": "The Verge", "url": "https://www.theverge.com/rss/index.xml"},
-    # Defence & security
-    {"name": "Breaking Defense", "url": "https://breakingdefense.com/feed/"},
-    {"name": "Defense One", "url": "https://www.defenseone.com/rss/technology/"},
-    {"name": "War on the Rocks", "url": "https://warontherocks.com/feed/"},
-    {"name": "The Debrief", "url": "https://thedebrief.org/feed/"},
-    {"name": "Defense News", "url": "https://www.defensenews.com/arc/outboundfeeds/rss/"},
-    # Power Platform / Copilot Studio (work)
-    {"name": "Power Platform Blog", "url": "https://www.microsoft.com/en-us/power-platform/blog/feed/"},
-    # Unverified -- Microsoft has changed this URL before. Run --dry-run first;
-    # if it 404s in the console output, just delete this line.
-    {"name": "Copilot Studio Blog", "url": "https://www.microsoft.com/en-us/microsoft-copilot/blog/copilot-studio/feed/"},
+    {"name": "AI Safety", "url": news_search('AI alignment OR mechanistic interpretability OR AI evaluations OR "AI safety"')},
+    {"name": "AI Agents & RSI", "url": news_search('"AI agents" OR "computer use" OR "recursive self-improvement" OR "AI scientist"')},
+    {"name": "Neurotechnology", "url": news_search('"brain computer interface" OR "neural implant" OR "neural decoding" OR neurotechnology')},
+    {"name": "Biotechnology", "url": news_search('"gene editing" OR "synthetic biology" OR biocomputing OR "longevity research"')},
+    {"name": "World Affairs", "url": news_search('geopolitics OR "US China" OR NATO OR "peace talks" OR sanctions')},
+    {"name": "Irish Affairs", "url": news_search('Ireland government OR "Irish economy" OR "Dáil" OR "Irish housing" OR "IDA Ireland"')},
+    {"name": "Frontier Companies", "url": news_search('Anthropic OR OpenAI OR "Meta AI" OR "Meta Llama"')},
+    {"name": "Consulting Companies", "url": news_search('Accenture AI OR "EY technology" OR "EY artificial intelligence"')},
 ]
 
 # ---------------------------------------------------------------------------
 # Keyword categories (word-boundary matched, case-insensitive)
 # ---------------------------------------------------------------------------
 
+# Specific phrases are preferred over generic triggers such as "AI" or "benchmark".
 KEYWORDS: dict[str, list[str]] = {
-    "AI": [
-        "artificial intelligence", "machine learning", "deep learning",
-        "neural network", "large language model", "LLM", "foundation model",
-        "generative AI", "GenAI", "Claude", "GPT", "ChatGPT", "OpenAI", "AI",
-        "Gemini", "Grok", "Kimi", "Moonshot AI", "DeepSeek", "Qwen", "Llama",
-        "Mistral AI", "AI model", "AI system", "AI safety", "AI alignment",
-        "AGI", "reinforcement learning", "computer vision", "natural language",
-        "transformer model", "AI agent", "multimodal", "frontier model",
-        "reasoning model", "state of the art", "SOTA", "breakthrough",
-        "benchmark",
-    ],
-    "Aerospace": [
-        "aerospace", "hypersonic", "ICBM", "ballistic missile",
-        "satellite constellation", "orbital launch", "launch vehicle",
-        "reusable rocket", "SpaceX", "Starship", "Falcon 9",
-        "Ariane", "Rocket Lab", "Blue Origin", "ULA",
-        "space launch", "spacecraft", "orbital", "reentry vehicle",
-    ],
-    "Autonomous_Vehicles": [
-        "autonomous vehicle", "self-driving", "autonomous driving",
-        "robotaxi", "driverless", "Waymo", "Tesla Autopilot",
-        "lidar", "autonomous robot", "drone delivery",
-        "unmanned aerial", "UAV", "UAS", "drone swarm",
-        "eVTOL", "air taxi", "autonomous system",
-    ],
-    "AR_VR": [
-        "augmented reality", "virtual reality", "mixed reality",
-        "extended reality", "spatial computing", "HoloLens",
-        "Vision Pro", "Meta Quest", "VR headset", "AR headset",
-        "holographic", "metaverse",
-    ],
-    "Defence_Tech": [
-        "defense technology", "defence technology", "military AI",
-        "autonomous weapon", "lethal autonomous", "drone warfare",
-        "cyber warfare", "electronic warfare", "directed energy weapon",
-        "hypersonic weapon", "missile defense", "JADC2",
-        "DARPA", "Pentagon", "DoD", "military robotics",
-        "counter-drone", "battlefield AI", "C2 system",
-        "signals intelligence", "SIGINT", "ISR",
-    ],
-    "Power_Platform": [
-        "Copilot Studio", "Power Automate", "Power Apps", "Power Platform",
-        "Dataverse", "Power Pages", "Power Fx", "MCP connector",
-        "release wave", "Power Platform admin",
-    ],
+    "AI": ["artificial intelligence", "large language model", "foundation model",
+           "frontier model", "reasoning model", "multimodal model", "deep learning",
+           "machine learning", "neural network", "GPT", "Claude", "Gemini",
+           "DeepSeek", "Qwen", "Llama", "OpenAI", "Anthropic", "DeepMind"],
+    "Neurotechnology": ["neurotechnology", "brain-computer interface", "brain computer interface",
+           "BCI", "neural implant", "neural decoding", "neural prosthesis",
+           "neural stimulation", "neuroprosthetic", "neuroimaging", "Neuralink", "Synchron"],
+    "Biotechnology": ["biotechnology", "biotech", "gene editing", "CRISPR",
+           "synthetic biology", "biocomputing", "organoid", "cell therapy",
+           "gene therapy", "longevity research", "protein design"],
+    "AI_Safety": ["AI safety", "AI alignment", "mechanistic interpretability",
+           "interpretability", "model evaluation", "AI evaluation",
+           "reward hacking", "scalable oversight", "model control", "misalignment"],
+    "RSI_AGI": ["recursive self-improvement", "self improving AI", "self-improving AI",
+           "AI scientist", "automated AI research", "autonomous AI research",
+           "artificial general intelligence", "AGI", "AI R&D automation"],
+    "Personal_Agents": ["AI agent", "agentic AI", "personal AI", "personal agent",
+           "computer use", "computer-using", "autonomous assistant",
+           "agent memory", "persistent memory", "MCP", "model context protocol"],
+    "Geopolitics": ["geopolitics", "US-China", "U.S.-China", "Taiwan Strait", "NATO",
+           "Ukraine war", "Russia Ukraine", "Middle East conflict",
+           "sanctions", "peace negotiations", "trade war", "semiconductor export controls"],
+    "Irish_Affairs": ["Ireland", "Irish government", "Dáil", "Taoiseach",
+           "Irish economy", "Irish housing", "IDA Ireland", "Irish budget",
+           "Irish election", "Irish infrastructure", "Irish data centre"],
+    "Companies": ["Meta AI", "Meta Llama", "Anthropic", "OpenAI", "Accenture", "EY",
+           "Ernst & Young"],
 }
+
+CATEGORY_WEIGHT = {
+    "AI": 3, "Neurotechnology": 5, "Biotechnology": 4,
+    "AI_Safety": 5, "RSI_AGI": 5, "Personal_Agents": 5,
+    "Geopolitics": 4, "Irish_Affairs": 4, "Companies": 2,
+}
+MAX_ARTICLES_PER_DAY = 10
+DAILY_STATE_FILE = Path("daily_state.json")
+
+# Known hard-paywall domains; this is a best-effort filter, not a paywall detector.
+PAYWALLED_DOMAINS = {
+    "ft.com", "wsj.com", "bloomberg.com", "economist.com",
+    "theinformation.com", "barrons.com", "businessinsider.com",
+}
+
 
 # ---------------------------------------------------------------------------
 # State file
@@ -104,7 +101,7 @@ KEYWORDS: dict[str, list[str]] = {
 SEEN_FILE = Path("seen_items.json")
 PRUNE_AFTER_DAYS = 30
 MAX_ITEM_AGE_DAYS = 14  # ignore entries older than this, even if never seen before
-MAX_ALERTS_PER_RUN = 25  # safety cap
+MAX_ALERTS_PER_RUN = MAX_ARTICLES_PER_DAY
 
 # ---------------------------------------------------------------------------
 # Feed fetching & parsing
@@ -278,85 +275,122 @@ def save_seen(seen: dict) -> None:
     SEEN_FILE.write_text(json.dumps(pruned, indent=2))
 
 # ---------------------------------------------------------------------------
+# Ranking, filtering, and story deduplication
+# ---------------------------------------------------------------------------
+
+def paywalled(link: str) -> bool:
+    from urllib.parse import urlparse
+    domain = (urlparse(link).hostname or "").lower()
+    return any(domain == d or domain.endswith("." + d) for d in PAYWALLED_DOMAINS)
+
+def story_signature(title: str) -> str:
+    # Drop punctuation and common noise words to consolidate similar headlines.
+    words = re.findall(r"[a-z0-9]+", title.lower())
+    stop = {"the", "a", "an", "in", "on", "of", "to", "for", "and", "with", "as",
+            "says", "report", "reports", "new", "latest"}
+    return " ".join(w for w in words if w not in stop)[:180]
+
+def relevance_score(entry: dict, categories: list[str]) -> int:
+    title = strip_html(entry.get("title", ""))
+    score = max(CATEGORY_WEIGHT[c] for c in categories)
+    # A topic in the headline is more meaningful than an incidental summary mention.
+    score += sum(3 for c in categories
+                 if any(_matches(title, term) for term in KEYWORDS[c]))
+    if any(_matches(title, term) for term in
+           ["breakthrough", "clinical trial", "peer reviewed", "research",
+            "launches", "releases", "major", "agreement", "election",
+            "investment", "acquisition"]):
+        score += 2
+    if len(categories) > 1:
+        score += 1
+    if any(_matches(title, term) for term in
+           ["opinion", "sponsored", "advertisement", "rumour", "rumor"]):
+        score -= 6
+    return score
+
+def load_daily_state() -> dict:
+    try:
+        return json.loads(DAILY_STATE_FILE.read_text())
+    except (OSError, ValueError):
+        return {"date": "", "sent": 0}
+
+def save_daily_state(date: str, count: int) -> None:
+    DAILY_STATE_FILE.write_text(json.dumps({"date": date, "sent": count}, indent=2) + "\n")
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def main() -> None:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
-
     dry_run = "--dry-run" in sys.argv
     if not dry_run and (not token or not chat_id):
-        print("ERROR: Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID environment variables.")
-        print("  Use --dry-run to test without sending.")
+        print("ERROR: Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.")
         sys.exit(1)
 
     seen = load_seen()
-    first_run = len(seen) == 0
-    if first_run:
-        print("First run detected -- seeding state without sending alerts.")
-
+    first_run = not seen
+    today = datetime.now(timezone.utc).date().isoformat()
+    state = load_daily_state()
+    sent_today = int(state.get("sent", 0)) if state.get("date") == today else 0
+    available = max(0, MAX_ARTICLES_PER_DAY - sent_today)
     now = datetime.now(timezone.utc).isoformat()
-    alerts_sent = 0
+    candidates = []
 
     for feed in FEEDS:
-        name = feed["name"]
-        url = feed["url"]
-        print(f"\n[{name}]")
-
-        data = fetch_bytes(url)
+        print(f"Checking {feed['name']}")
+        data = fetch_bytes(feed["url"])
         if data is None:
             continue
-
-        entries = parse_feed(data)
-        print(f"  {len(entries)} entries parsed")
-
-        for entry in entries:
-            age_days = entry_age_days(entry)
-            if age_days is not None and age_days > MAX_ITEM_AGE_DAYS:
-                continue  # too old -- never alert, never remember
-
+        for entry in parse_feed(data):
+            age = entry_age_days(entry)
+            if age is not None and (age > 2 or age < -1):
+                continue
             key = entry_key(entry)
-
             if key in seen:
                 continue
-            seen[key] = now  # mark seen regardless of keyword match
-
+            if not dry_run:
+                seen[key] = now  # prevent old backlog and repeat alerts
             if first_run:
-                continue  # don't alert on seed run
-
+                continue
             categories = matched_categories(entry)
-            if not categories:
+            if not categories or paywalled(entry.get("link", "")):
                 continue
-
-            title = strip_html(entry.get("title", "(no title)"))
-            link = entry.get("link", "")
-            summary = entry.get("summary", "")
-
-            print(f"  MATCH [{', '.join(categories)}]: {title[:90]}")
-
-            if dry_run:
-                print("    (dry-run, not sending)")
-                alerts_sent += 1
+            title = strip_html(entry.get("title", ""))
+            score = relevance_score(entry, categories)
+            if score < 5:
                 continue
+            candidates.append((score, title, feed["name"], categories, entry))
 
-            if alerts_sent >= MAX_ALERTS_PER_RUN:
-                print(f"  Reached MAX_ALERTS_PER_RUN={MAX_ALERTS_PER_RUN}, "
-                      f"skipping remaining sends for this run (still marking items seen).")
-                continue
+    candidates.sort(key=lambda x: (-x[0], x[1].lower()))
+    chosen = []
+    story_ids = set()
+    for score, title, source, categories, entry in candidates:
+        signature = story_signature(title)
+        if signature in story_ids:
+            continue
+        story_ids.add(signature)
+        chosen.append((score, title, source, categories, entry))
 
-            msg = build_message(name, categories, title, link, summary)
-            if send_telegram(token, chat_id, msg):
-                alerts_sent += 1
-
-    save_seen(seen)
-
-    print()
+    alerts_sent = 0
     if first_run:
-        print(f"Seeded {len(seen)} items. No alerts sent. Run again tomorrow for real alerts.")
+        print(f"First run: seeded {len(seen)} entries, no alerts.")
     else:
-        action = "matched (dry-run)" if dry_run else "alerts sent"
-        print(f"Done -- {alerts_sent} {action}.")
+        for score, title, source, categories, entry in chosen[:available]:
+            print(f"MATCH score={score} [{', '.join(categories)}]: {title}")
+            if dry_run:
+                alerts_sent += 1
+                continue
+            message = build_message(source, categories, title, entry.get("link", ""),
+                                    entry.get("summary", ""))
+            if send_telegram(token, chat_id, message):
+                alerts_sent += 1
+    if not dry_run:
+        save_seen(seen)
+        save_daily_state(today, sent_today + alerts_sent)
+    print(f"Done: {alerts_sent} alerts; daily cap {MAX_ARTICLES_PER_DAY}.")
+
 
 if __name__ == "__main__":
     main()
